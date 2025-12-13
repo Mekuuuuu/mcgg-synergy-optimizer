@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Dict, Set, Tuple, Optional
+from typing import List, Tuple
 
 @dataclass(frozen=True)
 class Trait:
