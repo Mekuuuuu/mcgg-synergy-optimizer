@@ -3,6 +3,70 @@ from models import Trait, Hero
 import itertools
 from collections import Counter
 
+def get_hid(hero_index, hero_name):
+    """
+    Resolve a single hero name to hero ID (case-insensitive).
+
+    Raises
+    ------
+    ValueError if hero name is unknown.
+    """
+    if not hero_name:
+        raise ValueError("Hero name cannot be empty.")
+
+    name_to_id = {h.name.lower(): h.id for h in hero_index}
+
+    key = hero_name.lower().strip()
+
+    if key not in name_to_id:
+        raise ValueError(
+            f"Unknown hero name: '{hero_name}'. "
+            f"Available heroes: {sorted(h.name for h in hero_index)}"
+        )
+
+    return name_to_id[key]
+
+def get_core_hid(hero_index, hero_names, allow_duplicates=False):
+    """
+    Convert hero names to hero IDs.
+
+    Parameters
+    ----------
+    hero_names : list[str]
+        List of hero names (case-insensitive).
+    hero_index : list[Hero]
+        Initialized hero list.
+    allow_duplicates : bool
+        Whether duplicate hero names are allowed.
+
+    Returns
+    -------
+    list[int]
+        List of hero IDs in the same order as input.
+
+    Raises
+    ------
+    ValueError
+        If hero name is unknown or duplicates are not allowed.
+    """
+    if not hero_names:
+        return []
+
+    resolved_ids = []
+    seen = set()
+
+    for name in hero_names:
+        hid = get_hid(hero_index, name)
+
+        if not allow_duplicates:
+            if hid in seen:
+                raise ValueError(f"Duplicate hero not allowed: '{name}'")
+            seen.add(hid)
+
+        resolved_ids.append(hid)
+
+    return resolved_ids
+
 GLORY_LEAGUE_ID = 8
 
 # Credits to pHeeDr for the Glory League rules in their YouTube video:
@@ -25,42 +89,41 @@ def get_glory_league_hid(hero_index, selected_heroes=None):
     if len(selected_heroes) != 2:
         raise ValueError("Glory League requires exactly 2 heroes.")
 
-    name_to_hero = {h.name: h for h in hero_index}
+    # Resolve heroes
     heroes = []
-
     for name in selected_heroes:
-        if name not in name_to_hero:
-            raise ValueError(f"Unknown hero: {name}")
-        heroes.append(name_to_hero[name])
+        hid = get_hid(hero_index, name)
+        heroes.append(hero_index[hid])
 
+    # Eligibility check
     for h in heroes:
         if h.name not in GLORY_LEAGUE_1_COST and h.name not in GLORY_LEAGUE_5_COST:
             raise ValueError(
-                f"{h.name} is not eligible for Glory League. "
-                f"Allowed 1-cost heroes: {sorted(GLORY_LEAGUE_1_COST)} | "
-                f"Allowed 5-cost heroes: {sorted(GLORY_LEAGUE_5_COST)}"
+                f"{h.name} is not eligible for Glory League.\n"
+                f"1-cost: {sorted(GLORY_LEAGUE_1_COST)}\n"
+                f"5-cost: {sorted(GLORY_LEAGUE_5_COST)}"
             )
 
     one_cost = [h for h in heroes if h.name in GLORY_LEAGUE_1_COST]
     five_cost = [h for h in heroes if h.name in GLORY_LEAGUE_5_COST]
-    
+
     if len(one_cost) != 1 or len(five_cost) != 1:
         raise ValueError(
-            "Glory League requires exactly one eligible 1-cost "
-            "and one eligible 5-cost hero."
+            "Glory League requires exactly one 1-cost "
+            "and one 5-cost hero."
         )
 
-    one_cost_hero = one_cost[0].name
-    five_cost_hero = five_cost[0].name
-    
-    allowed_fives = GLORY_LEAGUE_ALLOWED_PAIRS.get(one_cost_hero, set())
+    one_name = one_cost[0].name
+    five_name = five_cost[0].name
 
-    if five_cost_hero not in allowed_fives:
+    allowed_fives = GLORY_LEAGUE_ALLOWED_PAIRS.get(one_name, set())
+
+    if five_name not in allowed_fives:
         raise ValueError(
-            f"Invalid Glory League combination: {one_cost_hero} × {five_cost_hero}. "
-            f"Allowed 5-cost heroes for {one_cost_hero}: {sorted(allowed_fives)}"
+            f"Invalid Glory League combination: {one_name} × {five_name}. "
+            f"Allowed: {sorted(allowed_fives)}"
         )
-    
+
     return {one_cost[0].id, five_cost[0].id}
 
 
@@ -155,29 +218,29 @@ def evaluate_team(hero_ids, hero_index, trait_index, glory_league_ids=None):
     return final_score, synergy_info
 
 
-def find_best_team(max_team_size, hero_index, trait_index, locked_heroes=None, glory_league_ids=None, top_k=5):
+def find_best_team(max_team_size, hero_index, trait_index, core_hero_ids=None, glory_league_ids=None, top_k=5):
     """
     max_team_size  : final team size (ex: 5, 6, 7)
-    locked_heroes  : list of hero IDs that must be in the team
+    core_hero_ids  : list of hero IDs that must be in the team
     """
 
-    if locked_heroes is None:
-        locked_heroes = []
+    if core_hero_ids is None:
+        core_hero_ids = []
 
-    locked_heroes = list(set(locked_heroes))  # dedupe just in case
+    # core_hero_ids = list(set(core_hero_ids))  # dedupe just in case
 
     # Error handling: locked heroes exceed team size
-    if len(locked_heroes) > max_team_size:
+    if len(core_hero_ids) > max_team_size:
         raise ValueError(
-            f"Locked heroes ({len(locked_heroes)}) exceed team size ({max_team_size})."
+            f"Locked heroes ({len(core_hero_ids)}) exceed team size ({max_team_size})."
         )
 
     # All heroes except the locked ones
     all_hero_ids = list(range(len(hero_index)))
-    free_pool = [h for h in all_hero_ids if h not in locked_heroes]
+    free_pool = [h for h in all_hero_ids if h not in core_hero_ids]
 
     # How many more we need
-    remaining_slots = max_team_size - len(locked_heroes)
+    remaining_slots = max_team_size - len(core_hero_ids)
 
     best = []
     
@@ -185,7 +248,7 @@ def find_best_team(max_team_size, hero_index, trait_index, locked_heroes=None, g
 
     # Enumerate combinations for remaining slots
     for combo in itertools.combinations(free_pool, remaining_slots):
-        team = tuple(sorted(locked_heroes + list(combo)))
+        team = tuple(sorted(core_hero_ids + list(combo)))
 
         score, synergy = evaluate_team(team, hero_index, trait_index, glory_league_ids=glory_league_ids)
         best.append((score, team, synergy))
