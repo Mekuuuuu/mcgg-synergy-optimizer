@@ -287,6 +287,7 @@ def evaluate_team(hero_ids, hero_index, trait_index, glory_league_ids=None, magi
     # FORCE METRO ZERO PRIORITY
     if metro_zero_active:
         final_score += METRO_ZERO_BONUS
+    # NOTE: with find_best_team_m0_enforced, this case should never happen
     else:
         final_score -= METRO_ZERO_BONUS  # penalize teams without Metro Zero
 
@@ -419,6 +420,311 @@ def find_best_team_m0_enforced(max_team_size, hero_index, trait_index, core_hero
                 else:
                     if score > best_heap[0][0]:
                         heapq.heapreplace(best_heap, entry)
+
+    print(f"Checked {evaluated:,} teams")
+
+    return sorted(best_heap, reverse=True, key=lambda x: x[0])
+
+def find_best_team_increment_dfs(
+    max_team_size,
+    hero_index,
+    trait_index,
+    core_hero_ids=None,
+    glory_league_ids=None,
+    magic_crystal_ids=None,
+    top_k=5,
+):
+    if core_hero_ids is None:
+        core_hero_ids = []
+
+    if glory_league_ids is None:
+        glory_league_ids = set()
+
+    if magic_crystal_ids is None:
+        magic_crystal_ids = {}
+
+    if len(core_hero_ids) > max_team_size:
+        raise ValueError("Core heroes exceed team size")
+
+    # Precompute Metro Zero hero set
+    metro_zero_heroes = {
+        h.id for h in hero_index if METRO_ZERO_ID in h.trait_ids
+    }
+
+    # Initial incremental state from core heroes
+    trait_counts = {}
+    current_quality = 0
+    current_metro = 0
+    team = []
+
+    def add_hero(hid):
+        nonlocal current_quality, current_metro
+        hero = hero_index[hid]
+        team.append(hid)
+        current_quality += hero.quality
+
+        for tid in hero.trait_ids:
+            trait_counts[tid] = trait_counts.get(tid, 0) + 1
+
+        if hid in glory_league_ids:
+            trait_counts[GLORY_LEAGUE_ID] = trait_counts.get(GLORY_LEAGUE_ID, 0) + 1
+
+        if hid in metro_zero_heroes:
+            current_metro += 1
+
+    def remove_hero(hid):
+        nonlocal current_quality, current_metro
+        hero = hero_index[hid]
+        team.pop()
+        current_quality -= hero.quality
+
+        for tid in hero.trait_ids:
+            trait_counts[tid] -= 1
+            if trait_counts[tid] == 0:
+                del trait_counts[tid]
+
+        if hid in glory_league_ids:
+            trait_counts[GLORY_LEAGUE_ID] -= 1
+            if trait_counts[GLORY_LEAGUE_ID] == 0:
+                del trait_counts[GLORY_LEAGUE_ID]
+
+        if hid in metro_zero_heroes:
+            current_metro -= 1
+
+    # Apply core heroes
+    for hid in core_hero_ids:
+        add_hero(hid)
+
+    # Apply magic crystals ONCE (static bonus)
+    for tid, bonus in magic_crystal_ids.items():
+        trait_counts[tid] = trait_counts.get(tid, 0) + bonus
+
+    # MIN-HEAP for top K
+    best_heap = []
+
+    all_hero_ids = list(range(len(hero_index)))
+    free_pool = [h for h in all_hero_ids if h not in core_hero_ids]
+    
+    evaluated = 0
+
+    # Recursive DFS
+    def dfs(start_idx):
+        nonlocal evaluated
+        
+        # Stop condition
+        if len(team) == max_team_size:
+            
+            evaluated += 1
+            
+            if current_metro < METRO_ZERO_THRESHOLD:
+                return
+
+            # Compute synergy score incrementally
+            synergy_score = 0
+            synergy_info = {}
+
+            for tid, count in trait_counts.items():
+                thresholds = trait_index[tid].thresholds
+                reached = max((t for t in thresholds if count >= t), default=None)
+                if reached:
+                    synergy_score += reached * 10
+                    synergy_info[tid] = reached
+
+            score = synergy_score + current_quality + METRO_ZERO_BONUS
+
+            entry = (score, tuple(sorted(team)), synergy_info)
+
+            if len(best_heap) < top_k:
+                heapq.heappush(best_heap, entry)
+            else:
+                if score > best_heap[0][0]:
+                    heapq.heapreplace(best_heap, entry)
+
+            return
+
+        # Recursive expansion
+        for i in range(start_idx, len(free_pool)):
+            hid = free_pool[i]
+            add_hero(hid)
+            dfs(i + 1)
+            remove_hero(hid)
+
+    dfs(0)
+    
+    print(f"Checked {evaluated:,} teams")
+
+    return sorted(best_heap, reverse=True, key=lambda x: x[0])
+
+def find_best_team_m0_increment_dfs(
+    max_team_size,
+    hero_index,
+    trait_index,
+    core_hero_ids=None,
+    glory_league_ids=None,
+    magic_crystal_ids=None,
+    top_k=5,
+):
+    """
+    max_team_size  : final team size (ex: 5, 6, 7)
+    core_hero_ids  : list of hero IDs that must be in the team
+    """
+
+    if core_hero_ids is None:
+        core_hero_ids = []
+
+    if glory_league_ids is None:
+        glory_league_ids = set()
+
+    if magic_crystal_ids is None:
+        magic_crystal_ids = {}
+
+    # Error handling: Core heroes exceed team size
+    if len(core_hero_ids) > max_team_size:
+        raise ValueError(
+            f"Core heroes ({len(core_hero_ids)}) exceed team size ({max_team_size})."
+        )
+
+    # All heroes except the core ones
+    all_hero_ids = list(range(len(hero_index)))
+    free_pool = [h for h in all_hero_ids if h not in core_hero_ids]
+    
+    # Enforce Metro Zero condition
+    metro_zero_heroes = {
+        h.id for h in hero_index if METRO_ZERO_ID in h.trait_ids
+    }
+
+    core_metro_count = sum(
+        1 for hid in core_hero_ids if hid in metro_zero_heroes
+    )
+
+    required_metro = max(0, METRO_ZERO_THRESHOLD - core_metro_count)
+
+    metro_free = [h for h in free_pool if h in metro_zero_heroes]
+    non_metro_free = [h for h in free_pool if h not in metro_zero_heroes]
+
+    if required_metro > len(metro_free):
+        return []  # impossible to satisfy Metro Zero
+
+    # DFS pool = metro first, then non-metro
+    dfs_pool = metro_free + non_metro_free
+    dfs_is_metro = [True] * len(metro_free) + [False] * len(non_metro_free)
+
+    # Suffix count for remaining Metro Zero heroes
+    remaining_metro_suffix = [0] * (len(dfs_pool) + 1)
+    for i in range(len(dfs_pool) - 1, -1, -1):
+        remaining_metro_suffix[i] = remaining_metro_suffix[i + 1]
+        if dfs_is_metro[i]:
+            remaining_metro_suffix[i] += 1
+
+    # -----------------------------
+    # Incremental state
+    # -----------------------------
+    trait_counts = {}
+    current_quality = 0
+    current_metro = core_metro_count
+    team = []
+
+    def add_hero(hid):
+        nonlocal current_quality, current_metro
+        hero = hero_index[hid]
+        team.append(hid)
+        current_quality += hero.quality
+
+        for tid in hero.trait_ids:
+            trait_counts[tid] = trait_counts.get(tid, 0) + 1
+
+        if hid in glory_league_ids:
+            trait_counts[GLORY_LEAGUE_ID] = trait_counts.get(GLORY_LEAGUE_ID, 0) + 1
+
+        if hid in metro_zero_heroes:
+            current_metro += 1
+
+    def remove_hero(hid):
+        nonlocal current_quality, current_metro
+        hero = hero_index[hid]
+        team.pop()
+        current_quality -= hero.quality
+
+        for tid in hero.trait_ids:
+            trait_counts[tid] -= 1
+            if trait_counts[tid] == 0:
+                del trait_counts[tid]
+
+        if hid in glory_league_ids:
+            trait_counts[GLORY_LEAGUE_ID] -= 1
+            if trait_counts[GLORY_LEAGUE_ID] == 0:
+                del trait_counts[GLORY_LEAGUE_ID]
+
+        if hid in metro_zero_heroes:
+            current_metro -= 1
+
+    # -----------------------------
+    # Apply core heroes
+    # -----------------------------
+    for hid in core_hero_ids:
+        add_hero(hid)
+
+    # Apply magic crystals ONCE
+    for tid, bonus in magic_crystal_ids.items():
+        trait_counts[tid] = trait_counts.get(tid, 0) + bonus
+
+    # -----------------------------
+    # Result tracking
+    # -----------------------------
+    best_heap = []
+    evaluated = 0
+
+    # -----------------------------
+    # DFS with PRE-ENUMERATION pruning
+    # -----------------------------
+    def dfs(start_idx):
+        nonlocal evaluated
+
+        slots_left = max_team_size - len(team)
+
+        # 🚨 Metro Zero feasibility prune (BEFORE enumeration)
+        max_possible_metro = current_metro + remaining_metro_suffix[start_idx]
+        if max_possible_metro < METRO_ZERO_THRESHOLD:
+            return
+
+        # Not enough slots to finish
+        if slots_left < 0:
+            return
+
+        # Leaf
+        if slots_left == 0:
+            evaluated += 1
+
+            # Guaranteed Metro Zero satisfied due to pruning
+            synergy_score = 0
+            synergy_info = {}
+
+            for tid, count in trait_counts.items():
+                thresholds = trait_index[tid].thresholds
+                reached = max((t for t in thresholds if count >= t), default=None)
+                if reached:
+                    synergy_score += reached * 10
+                    synergy_info[tid] = reached
+
+            score = synergy_score + current_quality + METRO_ZERO_BONUS
+            entry = (score, tuple(sorted(team)), synergy_info)
+
+            if len(best_heap) < top_k:
+                heapq.heappush(best_heap, entry)
+            else:
+                if score > best_heap[0][0]:
+                    heapq.heapreplace(best_heap, entry)
+
+            return
+
+        # Expand
+        for i in range(start_idx, len(dfs_pool)):
+            hid = dfs_pool[i]
+            add_hero(hid)
+            dfs(i + 1)
+            remove_hero(hid)
+
+    dfs(0)
 
     print(f"Checked {evaluated:,} teams")
 
