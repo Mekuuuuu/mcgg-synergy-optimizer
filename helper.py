@@ -2,6 +2,7 @@ from models import Trait, Hero
 
 import itertools
 from collections import Counter
+import heapq
 
 def get_hid(hero_index, hero_name):
     """
@@ -303,33 +304,46 @@ def find_best_team(max_team_size, hero_index, trait_index, core_hero_ids=None, g
 
     # core_hero_ids = list(set(core_hero_ids))  # dedupe just in case
 
-    # Error handling: locked heroes exceed team size
+    # Error handling: Core heroes exceed team size
     if len(core_hero_ids) > max_team_size:
         raise ValueError(
-            f"Locked heroes ({len(core_hero_ids)}) exceed team size ({max_team_size})."
+            f"Core heroes ({len(core_hero_ids)}) exceed team size ({max_team_size})."
         )
 
-    # All heroes except the locked ones
+    # All heroes except the core ones
     all_hero_ids = list(range(len(hero_index)))
     free_pool = [h for h in all_hero_ids if h not in core_hero_ids]
 
     # How many more we need
     remaining_slots = max_team_size - len(core_hero_ids)
 
-    best = []
-    
+    # MIN-HEAP of size <= top_k
+    best_heap = []
     evaluated = 0
 
-    # Enumerate combinations for remaining slots
     for combo in itertools.combinations(free_pool, remaining_slots):
         team = tuple(sorted(core_hero_ids + list(combo)))
 
-        score, synergy = evaluate_team(team, hero_index, trait_index, glory_league_ids=glory_league_ids, magic_crystal_ids=magic_crystal_ids)
-        best.append((score, team, synergy))
-        
+        score, synergy = evaluate_team(
+            team,
+            hero_index,
+            trait_index,
+            glory_league_ids=glory_league_ids,
+            magic_crystal_ids=magic_crystal_ids,
+        )
+
         evaluated += 1
 
+        entry = (score, team, synergy)
+
+        if len(best_heap) < top_k:
+            heapq.heappush(best_heap, entry)
+        else:
+            # Only keep if better than worst in heap
+            if score > best_heap[0][0]:
+                heapq.heapreplace(best_heap, entry)
+
     print(f"Checked {evaluated:,} teams")
-    
-    best.sort(reverse=True, key=lambda x: x[0])
-    return best[:top_k]
+
+    # Return sorted best results (highest first)
+    return sorted(best_heap, reverse=True, key=lambda x: x[0])

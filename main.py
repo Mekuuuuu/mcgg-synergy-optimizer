@@ -19,7 +19,6 @@ glory_league_heroes = [
 
 magic_crystals = [
     "Marksman",
-    "Marksman"
 ]
 
 start_time = time.perf_counter()
@@ -30,7 +29,7 @@ glory_league_ids = get_glory_league_hid(hero_index, selected_heroes=glory_league
 
 magic_crystal_ids = get_mcid(traits_index, magic_crystals)
 
-results = find_best_team(10, hero_index, traits_index, core_hero_ids=core_hero_ids, glory_league_ids=glory_league_ids, magic_crystal_ids=magic_crystal_ids, top_k=5)
+results = find_best_team(9, hero_index, traits_index, core_hero_ids=core_hero_ids, glory_league_ids=glory_league_ids, magic_crystal_ids=magic_crystal_ids, top_k=5)
 
 for score, team, synergies in results:
     print("\nScore:", score)
