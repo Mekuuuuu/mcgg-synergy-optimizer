@@ -126,6 +126,75 @@ def get_glory_league_hid(hero_index, selected_heroes=None):
 
     return {one_cost[0].id, five_cost[0].id}
 
+# to future Miko: this is normalized to lowercase, don't change it just because you think it looks ugly
+MAGIC_CRYSTAL_ALLOWED = {
+    "bruiser",
+    "dauntless",
+    "defender",
+    "weapon master",
+    "marksman",
+    "mage",
+    "stargazer",
+    "swiftblade",
+    "soul vessels",
+    "shadowcell",
+    "starwing",
+    "kof",
+    "luminexus",
+    "aspirants",
+    "toy mischief",
+}
+
+def get_mcid(trait_index, magic_crystals):
+    """
+    Convert magic crystal trait names to trait IDs.
+
+    Parameters
+    ----------
+    trait_index : list[Trait]
+        Initialized trait list.
+    magic_crystals : list[str]
+        Trait names (case-insensitive).
+
+    Returns
+    -------
+    dict[int, int]
+        trait_id -> bonus count (each crystal = +1)
+
+    Raises
+    ------
+    ValueError
+        If trait is unknown or not eligible as a magic crystal.
+    """
+    if not magic_crystals:
+        return {}
+
+    # Build case-insensitive lookup
+    name_to_trait = {
+        t.name.lower(): t.id for t in trait_index
+    }
+
+    crystal_counter = {}
+
+    for name in magic_crystals:
+        key = name.lower().strip()
+
+        if key not in name_to_trait:
+            raise ValueError(
+                f"Trait '{name}' cannot be used as a Magic Crystal. "
+                f"Allowed Magic Crystals: {sorted(t.title() for t in MAGIC_CRYSTAL_ALLOWED)}"
+            )
+
+        if key not in MAGIC_CRYSTAL_ALLOWED:
+            raise ValueError(
+                f"Trait '{name}' cannot be used as a Magic Crystal. "
+                f"Allowed Magic Crystals: {sorted(MAGIC_CRYSTAL_ALLOWED)}"
+            )
+
+        tid = name_to_trait[key]
+        crystal_counter[tid] = crystal_counter.get(tid, 0) + 1
+
+    return crystal_counter
 
 def initialize_traits_and_heroes(traits, heroes):
     # init traits
@@ -157,7 +226,7 @@ METRO_ZERO_ID = 9
 METRO_ZERO_THRESHOLD = 2 
 METRO_ZERO_BONUS = 500
 
-def evaluate_team(hero_ids, hero_index, trait_index, glory_league_ids=None):
+def evaluate_team(hero_ids, hero_index, trait_index, glory_league_ids=None, magic_crystal_ids=None):
     """Returns (score, synergy_info) for a team of hero objects."""
     
     # 0. Check current match's Glory League heroes
@@ -181,6 +250,11 @@ def evaluate_team(hero_ids, hero_index, trait_index, glory_league_ids=None):
         # random Glory League trait
         if hid in glory_league_ids:
             trait_counter[GLORY_LEAGUE_ID] += 1
+    
+    # 2.5 Apply trait magic_crystal_ids (+1 per magic crystal)
+    if magic_crystal_ids:
+        for tid, bonus in magic_crystal_ids.items():
+            trait_counter[tid] += bonus
 
     # 3. Check Metro Zero requirement
     metro_zero_active = trait_counter[METRO_ZERO_ID] >= METRO_ZERO_THRESHOLD
@@ -218,7 +292,7 @@ def evaluate_team(hero_ids, hero_index, trait_index, glory_league_ids=None):
     return final_score, synergy_info
 
 
-def find_best_team(max_team_size, hero_index, trait_index, core_hero_ids=None, glory_league_ids=None, top_k=5):
+def find_best_team(max_team_size, hero_index, trait_index, core_hero_ids=None, glory_league_ids=None, magic_crystal_ids=None, top_k=5):
     """
     max_team_size  : final team size (ex: 5, 6, 7)
     core_hero_ids  : list of hero IDs that must be in the team
@@ -250,7 +324,7 @@ def find_best_team(max_team_size, hero_index, trait_index, core_hero_ids=None, g
     for combo in itertools.combinations(free_pool, remaining_slots):
         team = tuple(sorted(core_hero_ids + list(combo)))
 
-        score, synergy = evaluate_team(team, hero_index, trait_index, glory_league_ids=glory_league_ids)
+        score, synergy = evaluate_team(team, hero_index, trait_index, glory_league_ids=glory_league_ids, magic_crystal_ids=magic_crystal_ids)
         best.append((score, team, synergy))
         
         evaluated += 1
